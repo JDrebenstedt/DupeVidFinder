@@ -1,3 +1,7 @@
+#Region ;**** Directives created by AutoIt3Wrapper_GUI ****
+#AutoIt3Wrapper_UseX64=y
+#Tidy_Parameters=/reel
+#EndRegion ;**** Directives created by AutoIt3Wrapper_GUI ****
 #include <GDIPlus.au3>
 #include <GUIConstantsEx.au3>
 #include <GUIButton.au3>
@@ -11,241 +15,354 @@
 #include <GuiStatusBar.au3>
 #include <Process.au3>
 #include <constants.au3>
-
+#include <StringConstants.au3>
+#include <EditConstants.au3>
 
 AutoItSetOption("MustDeclareVars", 1)
 AutoItSetOption("GUIOnEventMode", 1)
-Opt("WinTitleMatchMode", 2)
 
-;~ mtn -c 1 -r 1 -D 0 -O thumbs -i F:\jb\3
-;~ ffmpeg -i in.avi -ss 15 -vf thumbnail,scale=320:200 -frames:v 1 out.png
-
-
+#Region Variable Defs
+Global $sPath1, $sPath2, $aCollectionFiles[1][3], $aFilesToCompare[1][3], $bSingleDir = 0, $iInnerStart = 1
+Global $Timer, $iRunningTime, $iLoopTime, $iTimePerPicture, $iTimerVar
 Global $hMainImage, $hCompImage
-Global $sFile, $sPath1, $sPath2, $aFilesToCompare, $FileName, $sFileMain, $aCollectionFiles, $sFileNameMain, $sFileNameComp, $aDeletableFiles, $iMntPID, $sLine
-Global $iMaxLum_Main = 0, $iMaxLum_Comp = 0, $iSize, $iHistMatches = 0, $fMatchOverall = 0, $iSCIndex_Main = 0
-Global $tChannel_Main, $tChannel_Comp
-Global $aHistogramFormat[] = [$GDIP_HistogramFormatGray, $GDIP_HistogramFormatR, $GDIP_HistogramFormatG, $GDIP_HistogramFormatB], $Format, $i, $iHandleCounter
-Global $hGui, $hGraphics, $hThumbMain, $hThumbComp, $hOKButton, $hLabel, $bWait, $hName1, $hName2, $hTemp, $hStatus, $Timer, $hLogFile, $iRunningTime, $iLoopTime, $Counter, $iTimePerPicture, $bSingleDir = False
+Global $iSize, $iHistMatches = 0, $fMatchOverall = 0, $iSCIndex_Main = 0, $iBlackness
 
-Global $aCompSize[4][2] = [[160, 120],[320, 240],[480, 360],[640, 480]]
-Global $fNormFact, $iSens = 150, $iMatchThreshold = 80, $iCompSize = 2, $iInteractive = 0, $iKillThresh = 100, $iSCThresh = 180
+Global $aHistogramFormat[] = [$GDIP_HistogramFormatGray, $GDIP_HistogramFormatR, $GDIP_HistogramFormatG, $GDIP_HistogramFormatB]
+Global $tChannel_Main, $tChannel_Comp
+Global $hThumbMain, $hThumbComp
+Global $sFileNameMain, $sFileNameComp
+#EndRegion Variable Defs
+
+#Region gui variables
+Global $hGui, $hStatus, $hEdit
+#EndRegion gui variables
+
+#Region parameter defs
+Global $sDividerLine = "----------------------------------------------------" ;
+Global $hLogFile = FileOpen(@ScriptDir & "\" & @YEAR & @MON & @MDAY & "_" & @HOUR & "-" & @MIN & "_dupefinder.log", 32 + 2)
+Global $aCompSize[4][2] = [[160, 120], [320, 240], [480, 360], [640, 480]]
+Global $iSearchRange_ms = 5000
+Global $iSens = 150, $iMatchThreshold = 80, $iCompSize = 2, $iKillThresh = 100, $iSCThresh = 180, $iBlacknessThresh = 6
+Global $sFileFilter = "*.avi;*.mp4;*.wmv;*.flv;*.divx;*.mkv;*.mov;*.mpg;*.mpeg;*.webm;*.ts;*.mts;*.3gp"
+#EndRegion parameter defs
 
 If Not _GDIPlus_Startup() Then
 	MsgBox($MB_SYSTEMMODAL, "ERROR", "GDIPlus.dll v1.1 not available")
 	Exit
 EndIf
 
-$hGui = GUICreate("DupeFinder", 280, 170)
+#Region Gui
+$hGui = GUICreate("DupeFinder", 600, 400)
 $hStatus = _GUICtrlStatusBar_Create($hGui, -1, "")
-$hGraphics = _GDIPlus_GraphicsCreateFromHWND($hGui)
 GUISetOnEvent($GUI_EVENT_CLOSE, "_Exit")
-GUISetOnEvent($GUI_EVENT_RESTORE, "_Redraw")
-$hName1 = GUICtrlCreateLabel("", 15, 95, 115, 20)
-$hName2 = GUICtrlCreateLabel("", 155, 95, 115, 20)
-$hOKButton = GUICtrlCreateButton("OK", 10, 110, 30, 20)
-GUICtrlSetOnEvent($hOKButton, "_Continue")
-$hLabel = GUICtrlCreateLabel("", 55, 110, 200, 20)
-GUIRegisterMsg($WM_PAINT, "_Redraw")
-GUIRegisterMsg($WM_ERASEBKGND, "_Redraw")
+$hEdit = GUICtrlCreateEdit("", 6, 6, 585, 355, $ES_READONLY + $ES_AUTOVSCROLL)
+
 GUISetState(@SW_SHOW)
+#EndRegion Gui
 
-$hLogFile = FileOpen(@ScriptDir & "\dupefinder.log", 2)
-
-$sPath1 = FileSelectFolder("select collection folder", "", 1, "", $hGui)
+$sPath1 = FileSelectFolder("select collection folder", "", 1, "F:\DupeTest\borders", $hGui)
 If @error Then _Exit()
 
 $sPath2 = FileSelectFolder("select a folder to compare", "", 1, $sPath1, $hGui)
 If @error Then _Exit()
 
 _GUICtrlStatusBar_SetText($hStatus, "Creating Collection Thumbnails")
-_ThumbNailer($sPath1, "temp1")
-$aCollectionFiles = _FileListToArrayRec(@ScriptDir & "\temp1", "*.jpg", 1, 1, 0, 2)
-$aCollectionFiles[0] = Int($aCollectionFiles[0])
+
+_ThumbNailer($sPath1, $aCollectionFiles)
+For $i = 1 To UBound($aCollectionFiles) - 1
+	$aCollectionFiles[$i][2] = Number($aCollectionFiles[$i][2])
+Next
+_ArraySort($aCollectionFiles, 0, 1, 0, 2)
 
 If $sPath1 == $sPath2 Then
-	$bSingleDir = True
-	$aFilesToCompare = _FileListToArrayRec(@ScriptDir & "\temp1", "*.jpg", 1, 1, 0, 2)
+	$bSingleDir = 1
+	$aFilesToCompare = $aCollectionFiles
 Else
 	_GUICtrlStatusBar_SetText($hStatus, "Creating Compare Thumbnails")
-	_ThumbNailer($sPath2, "temp2")
-	$aFilesToCompare = _FileListToArrayRec(@ScriptDir & "\temp2", "*.jpg", 1, 1, 0, 2)
+	_ThumbNailer($sPath2, $aFilesToCompare)
+	For $i = 1 To UBound($aFilesToCompare) - 1
+		$aFilesToCompare[$i][2] = Number($aFilesToCompare[$i][2])
+	Next
+	_ArraySort($aFilesToCompare, 0, 1, 0, 2)
 EndIf
-
-Global $aFTCHandles[Int($aFilesToCompare[0])]
-
-For $i = 1 To Int($aFilesToCompare[0])
-	$aFTCHandles[$i - 1] = _GDIPlus_ImageLoadFromFile($aFilesToCompare[$i])
-Next
 
 _GUICtrlStatusBar_SetText($hStatus, "")
 
-For $sFileMain In $aCollectionFiles
+$iTimerVar = $aCollectionFiles[0][0]
 
-	If IsInt($sFileMain) Then ContinueLoop
+For $iOuterLoop = 1 To $aCollectionFiles[0][0] - $bSingleDir
+;~ 	Generate working values
 
-	$hTemp = _GDIPlus_ImageLoadFromFile($sFileMain)
-	$hMainImage = _GDIPlus_ImageResize($hTemp, $aCompSize[$iCompSize][0], $aCompSize[$iCompSize][1])
-	_GDIPlus_ImageDispose($hTemp)
+	$sFileNameMain = _FileName($aCollectionFiles[$iOuterLoop][0])
 
-	$sFileNameMain = _StringExplode($sFileMain, "\")
-	$sFileNameMain = $sFileNameMain[UBound($sFileNameMain) - 1]
-
-	$hThumbMain = _Thumb($hMainImage)
-	_GDIPlus_GraphicsDrawImage($hGraphics, $hThumbMain, 10, 10)
-	_WinAPI_RedrawWindow($hGUI, 0, 0, $RDW_VALIDATE)
-	GUICtrlSetData($hName1, $sFileNameMain)
+	$hMainImage = _GDIPlus_ImageResize($aCollectionFiles[$iOuterLoop][1], $aCompSize[$iCompSize][0], $aCompSize[$iCompSize][1])
 
 	$Timer = TimerInit()
 	If $bSingleDir Then
-		_ArrayDelete($aFilesToCompare, 1)
-		_ArrayDelete($aFTCHandles, 0)
+		$iInnerStart = $iOuterLoop + 1
 	EndIf
-	$iHandleCounter = 0
-	For $sFile In $aFilesToCompare
+	For $iInnerLoop = $iInnerStart To $aFilesToCompare[0][0]
 
-		If IsInt($sFile) Then ContinueLoop
+		If (Abs($aCollectionFiles[$iOuterLoop][2] - $aFilesToCompare[$iInnerLoop][2]) < $iSearchRange_ms) Or $iSearchRange_ms = -1 Then
 
-		$hCompImage = _GDIPlus_ImageResize($aFTCHandles[$iHandleCounter], $aCompSize[$iCompSize][0], $aCompSize[$iCompSize][1])
+			$sFileNameComp = _FileName($aFilesToCompare[$iInnerLoop][0])
+			$hCompImage = _GDIPlus_ImageResize($aFilesToCompare[$iInnerLoop][1], $aCompSize[$iCompSize][0], $aCompSize[$iCompSize][1])
 
-		$sFileNameComp = _StringExplode($sFile, "\")
-		$sFileNameComp = $sFileNameComp[UBound($sFileNameComp) - 1]
-
-		$hThumbComp = _Thumb($hCompImage)
-		_GDIPlus_GraphicsDrawImage($hGraphics, $hThumbComp, 150, 10)
-		_WinAPI_RedrawWindow($hGUI, 0, 0, $RDW_VALIDATE)
-		GUICtrlSetData($hName2, $sFileNameComp)
-
-		; Compare Channels
-		$fMatchOverall = 0
-		$iSCIndex_Main = 0
-		For $Format In $aHistogramFormat
-			$iSize = _GDIPlus_BitmapGetHistogramSize($Format)
-
-			$tChannel_Main = DllStructCreate("uint[" & $iSize & "];")
-			_GDIPlus_BitmapGetHistogram($hMainImage, $Format, $iSize, $tChannel_Main)
-			$iMaxLum_Main = 0
-			For $i = 1 To $iSize
-				If DllStructGetData($tChannel_Main, 1, $i) > $iMaxLum_Main Then $iMaxLum_Main = DllStructGetData($tChannel_Main, 1, $i)
-				If DllStructGetData($tChannel_Main, 1, $i) == 0 Then $iSCIndex_Main += 1
+			; Compare Channels
+			$fMatchOverall = 0
+			$iSCIndex_Main = 0
+			For $Format In $aHistogramFormat
+				$iSize = _GDIPlus_BitmapGetHistogramSize($Format)
+				$tChannel_Main = DllStructCreate("uint[" & $iSize & "];")
+				_GDIPlus_BitmapGetHistogram($hMainImage, $Format, $iSize, $tChannel_Main)
+				$tChannel_Comp = DllStructCreate("uint[" & $iSize & "];")
+				_GDIPlus_BitmapGetHistogram($hCompImage, $Format, $iSize, $tChannel_Comp)
+				$iHistMatches = 0
+				For $i = 1 To $iSize
+					If Abs(DllStructGetData($tChannel_Main, 1, $i) - DllStructGetData($tChannel_Comp, 1, $i)) < $iSens Then $iHistMatches += 1
+				Next
+				$fMatchOverall += $iHistMatches / ($iSize) * 100
 			Next
 
-			$tChannel_Comp = DllStructCreate("uint[" & $iSize & "];")
-			_GDIPlus_BitmapGetHistogram($hCompImage, $Format, $iSize, $tChannel_Comp)
-			$iMaxLum_Comp = 0
-			For $i = 1 To $iSize
-				If DllStructGetData($tChannel_Comp, 1, $i) > $iMaxLum_Comp Then $iMaxLum_Comp = DllStructGetData($tChannel_Comp, 1, $i)
-			Next
-
-			$fNormFact = $iMaxLum_Comp / $iMaxLum_Main
-
-			$iHistMatches = 0
-			For $i = 1 To $iSize
-				If Abs(DllStructGetData($tChannel_Main, 1, $i) * $fNormFact - DllStructGetData($tChannel_Comp, 1, $i)) < $iSens Then $iHistMatches += 1
-			Next
-			$fMatchOverall += $iHistMatches / $iSize * 100
-		Next
-		if $iSCIndex_Main/4 > $iSCThresh Then
-;~ 			ConsoleWrite("Unicolor Warning: " & $iSCIndex_Main/4 & " in File " & $sFileMain & @CRLF)
-			FileWriteLine($hLogFile, "Unicolor Warning: " & $iSCIndex_Main/4 & " in Collection File " & $sFileMain )
-			ContinueLoop(2)
-		EndIf
-
-		$fMatchOverall /= 4
-
-		If $fMatchOverall > $iMatchThreshold Then
-			If $iInteractive Then
-				GUICtrlSetData($hLabel, "match found " & Int($fMatchOverall) & "%")
-				$bWait = True
-				While $bWait
-					Sleep(100)
-				WEnd
-				GUICtrlSetData($hLabel, "")
+			$fMatchOverall /= 4
+			If $fMatchOverall > $iMatchThreshold Then
+				_Log($sFileNameMain & " -> " & $sFileNameComp & " : " & Int($fMatchOverall) & "%")
+				If $iKillThresh And Int($fMatchOverall) >= $iKillThresh Then
+;~ 				_Log("Deleting: " & StringReplace(StringTrimRight($sFileNameComp, 4), "_", ".", -1) & " : " & FileDelete($sPath2 & "\" & StringReplace(StringTrimRight($sFileNameComp, 4), "_", ".", -1)))
+				EndIf
+				_Log($sDividerLine)
 			EndIf
-			FileWriteLine($hLogFile, $sFileNameMain & " -> " & $sFileNameComp & " : " & Int($fMatchOverall) & "%")
-			If $iKillThresh And Int($fMatchOverall) >= $iKillThresh Then
-				FileWriteLine($hLogFile, "Deleting: " & StringReplace(StringTrimRight($sFileNameComp, 4), "_", ".", -1) & " : " & FileDelete($sPath2 & "\" & StringReplace(StringTrimRight($sFileNameComp, 4), "_", ".", -1)))
-			EndIf
-			FileWriteLine($hLogFile, "----------------------------------------------------" & @CRLF)
+			_GDIPlus_ImageDispose($hCompImage)
 		EndIf
-		_GDIPlus_ImageDispose($hCompImage)
-		_GDIPlus_BitmapDispose($hThumbComp)
-		$iHandleCounter += 1
-
 	Next
 
 	If $bSingleDir Then
-		$iLoopTime = (TimerDiff($Timer) / $aCollectionFiles[0]) * (($aCollectionFiles[0] * ($aCollectionFiles[0] + 1)) / 2)
+		$iLoopTime = (TimerDiff($Timer) / $iTimerVar) * (($iTimerVar * ($iTimerVar + 1)) / 2)
 	Else
-		$iLoopTime = $aCollectionFiles[0] * TimerDiff($Timer)
+		$iLoopTime = $iTimerVar * TimerDiff($Timer)
 	EndIf
-
-	$aCollectionFiles[0] -= 1
+	$iTimerVar -= 1
 
 	$iRunningTime = $iLoopTime / 1000
 	_GUICtrlStatusBar_SetText($hStatus, "Estimated: " & Int($iRunningTime / 3600) & " h " & Int($iRunningTime / 60) - (Int($iRunningTime / 3600) * 60) & " m " & Int($iRunningTime) - Int($iRunningTime / 60) * 60 & " s")
 	_GDIPlus_ImageDispose($hMainImage)
 	_GDIPlus_BitmapDispose($hThumbMain)
 Next
+
 _Exit()
 
-Func _ThumbNailer($sSource, $sDest)
+Func _ThumbNailer($sSource, ByRef $aArray)
 
-	Local $aSourceFiles = _FileListToArrayRec($sSource, "*", 1, 1, 0, 2), $sFile = "", $sDestFile, $sCommandLine = "", $sStatus = _GUICtrlStatusBar_GetText($hStatus, 0), $c = 1, $iError
+	Local $aSourceFiles = _FileListToArrayRec($sSource, $sFileFilter, 1, 1, 0, 2), $bData
+	Local $sStatus = _GUICtrlStatusBar_GetText($hStatus, 0)
+	Local $bThumbOK = True, $sCropString = "", $iCropCount = 0
 
-	DirCreate(@ScriptDir & '\' & $sDest)
-	FileWriteLine($hLogFile, $sStatus)
-	For $sFile In $aSourceFiles
-		If IsInt($sFile) Then ContinueLoop
-		_GUICtrlStatusBar_SetText($hStatus, $sStatus & " " & $c & "/" & UBound($aSourceFiles) - 1)
-		$sDestFile = _StringExplode($sFile, "\")
-		$sDestFile = $sDestFile[UBound($sDestFile) - 1]
-		$sDestFile = StringReplace($sDestFile, ".", "_") & ".jpg"
-		$sCommandLine = @ScriptDir & '\mtn\ffmpeg -i "' & $sFile & '" -ss 5 -vf thumbnail -frames:v 1 "' & @ScriptDir & '\' & $sDest & '\' & $sDestFile & '"'
-		$iError = RunWait($sCommandLine, @ScriptDir, @SW_HIDE)
-		If $iError Then
-			FileWriteLine($hLogFile, "Failed: " & $sFile)
-		Else
-			_CheckBlack()
-		EndIf
-		$c += 1
+	_Log($sStatus)
+	_Log($aSourceFiles[0] & " files found")
+	For $i = 1 To $aSourceFiles[0]
+		_GUICtrlStatusBar_SetText($hStatus, $i & "/" & $aSourceFiles[0] & " : " & _FileName($aSourceFiles[$i]))
+		$sCropString = ""
+		$iCropCount = 0
+		Do
+			$bThumbOK = True
+			$bData = _Thumbnail_Binary($aSourceFiles[$i], $sCropString)
+			If @error Then
+				_Log("failed: " & $aSourceFiles[$i])
+				_Log($bData)
+				ContinueLoop
+			Else
+				Switch $iCropCount
+					Case 0,1
+						$sCropString = _BorderCrop($bData, $aSourceFiles[$i])	; test on borders
+					Case 2,3
+						$sCropString = _BorderCrop($bData, $aSourceFiles[$i], False) ; crop top & bottom
+					Case Else
+						_Log("border detection failed: " & $aSourceFiles[$i])
+						ContinueLoop
+				EndSwitch
+				If $sCropString <> "" Then
+					$iCropCount += 1
+					$bThumbOK = False
+				Else
+					_ArrayAdd($aArray, $aSourceFiles[$i] & "|" & _GDIPlus_BitmapCreateFromMemory($bData) & "|" & _MediaInfo($aSourceFiles[$i], "duration"))
+				EndIf
+			EndIf
+		Until $bThumbOK
 	Next
+	$aArray[0][0] = UBound($aArray) - 1
 	_GUICtrlStatusBar_SetText($hStatus, "")
-	FileWriteLine($hLogFile, "-------------------------------------")
+	_Log($aArray[0][0] & " thumbnails created")
+	_Log($sDividerLine)
 
 EndFunc   ;==>_ThumbNailer
 
-Func _CheckBlack()
-	Return
-EndFunc   ;==>_CheckBlack
+Func _Thumbnail_Binary($sFileName, $sCropString = "")
 
-Func _Redraw()
+	Local $iPID, $bData, $sError
 
-	_GDIPlus_GraphicsDrawImage($hGraphics, $hThumbMain, 10, 10)
-	If $bWait Then _GDIPlus_GraphicsDrawImage($hGraphics, $hThumbComp, 150, 10)
+	$iPID = Run('ffmpeg -hide_banner -i "' & $sFileName & '" -vf "fps=fps=1/3,' & $sCropString & 'scale=150:-1,tile=3x3,format=pix_fmts=yuv420p" -frames:v 1 -vsync 0 -f mjpeg -', @ScriptDir, @SW_HIDE, BitOR($STDOUT_CHILD, $STDERR_CHILD))
+	ProcessWaitClose($iPID)
+	If @extended = 0 Then
+		$bData = StdoutRead($iPID, False, True)
+		$sError = StderrRead($iPID)
+		ConsoleWrite($sError & @CRLF)
+		Return $bData
+	Else
+		$sError = StderrRead($iPID)
+		ConsoleWrite($sError & @CRLF)
+		SetError(1)
+		Return $sError
+	EndIf
 
-EndFunc   ;==>_Redraw
+EndFunc   ;==>_Thumbnail_Binary
+
+Func _BorderCrop($bThumbData, $sFile, $LeftRight = True)
+
+	Local $iBlackness = 0, $fFactor, $iNewWidth, $iNewHeight, $aMediaDim, $_Return = ""
+	Local $iBlackness_First = 0, $iBlackness_Last = 0
+
+	Local $hImage = _GDIPlus_BitmapCreateFromMemory($bThumbData)
+
+	Local $iWidth = _GDIPlus_ImageGetWidth($hImage)
+	Local $iHeight = _GDIPlus_ImageGetHeight($hImage)
+	Local $iPixelcount = $iWidth * $iHeight
+	Local $iSize = _GDIPlus_BitmapGetHistogramSize($GDIP_HistogramFormatGray)
+	Local $tChannel = DllStructCreate("uint[" & $iSize & "];")
+	_GDIPlus_BitmapGetHistogram($hImage, $GDIP_HistogramFormatGray, $iSize, $tChannel)
+
+	Local $hFirst = _GDIPlus_BitmapCloneArea($hImage, 0, 0, $iWidth / 3, $iHeight / 3)
+	Local $tChannel_First = DllStructCreate("uint[" & $iSize & "];")
+	_GDIPlus_BitmapGetHistogram($hFirst, $GDIP_HistogramFormatGray, $iSize, $tChannel_First)
+
+	Local $hLast = _GDIPlus_BitmapCloneArea($hImage, 2 * ($iWidth / 3), 2 * ($iHeight / 3), $iWidth / 3, $iHeight / 3)
+	Local $tChannel_Last = DllStructCreate("uint[" & $iSize & "];")
+	_GDIPlus_BitmapGetHistogram($hLast, $GDIP_HistogramFormatGray, $iSize, $tChannel_Last)
+
+	For $i = 1 To $iBlacknessThresh
+		$iBlackness += DllStructGetData($tChannel, 1, $i)
+		$iBlackness_First += DllStructGetData($tChannel_First, 1, $i)
+		$iBlackness_Last += DllStructGetData($tChannel_Last, 1, $i)
+		If $i = 2 And $iBlackness < 0.48 Then Return ""
+	Next
+
+	If Abs(($iBlackness / $iPixelcount) - ($iBlackness_First / ($iPixelcount / 9))) > 0.01 Then Return ""
+	If Abs(($iBlackness / $iPixelcount) - ($iBlackness_Last / ($iPixelcount / 9))) > 0.01 Then Return ""
+
+	If $iBlackness / $iPixelcount > 0.8 Then
+		_Log(_FileName($sFile) & " is too dark -> compare will produce false positives")
+	ElseIf $iBlackness / $iPixelcount > 0.5 Then
+		$fFactor = 1 - ($iBlackness / $iPixelcount)
+		$aMediaDim = _MediaInfo($sFile, "width|height")
+		If $LeftRight Then
+;~ 			_Log(_FileName($sFile) & " black border detected -> cropping left/right")
+			$iNewWidth = Round((($aMediaDim[0] * $aMediaDim[1]) * $fFactor) / $aMediaDim[1])
+			While Mod($iNewWidth, 4)
+				$iNewWidth -= 1
+			WEnd
+			$iNewWidth -= 4 ;Tweaking output width
+			$_Return = "crop=w=" & $iNewWidth & ":h=" & $aMediaDim[1] & ":x=" & ($aMediaDim[0] - $iNewWidth) / 2 & ":y=0,"
+		Else
+;~ 			_Log(_FileName($sFile) & " black border detected -> cropping top/bottom")
+			$iNewHeight = Round((($aMediaDim[0] * $aMediaDim[1]) * $fFactor) / $aMediaDim[0])
+			While Mod($iNewHeight, 4)
+				$iNewHeight -= 1
+			WEnd
+			$iNewHeight -= 4 ;Tweaking output height
+			$_Return = "crop=w=" & $aMediaDim[0] & ":h=" & $iNewHeight & ":x=0:y=" & ($aMediaDim[1] - $iNewHeight) / 2 & ","
+		EndIf
+
+	EndIf
+
+	$tChannel = 0
+	$tChannel_First = 0
+	$tChannel_Last = 0
+	_GDIPlus_ImageDispose($hImage)
+	_GDIPlus_ImageDispose($hFirst)
+	_GDIPlus_ImageDispose($hLast)
+;~ 	_Log($_Return)
+	Return $_Return
+
+EndFunc   ;==>_BorderCrop
+
+Func _MediaInfo($_file, $Request = Default)
+
+	Local $__MediaInfo, $__MediaInfoHandle
+	Local $_Inform, $_Return, $_Attributes, $_Result[] = [""]
+
+	If @AutoItX64 Then
+		$__MediaInfo = DllOpen("MediaInfo64.dll")
+	Else
+		$__MediaInfo = DllOpen("MediaInfo.dll")
+	EndIf
+
+	$__MediaInfoHandle = DllCall($__MediaInfo, "ptr", "MediaInfo_New")
+	DllCall($__MediaInfo, "int", "MediaInfo_Open", "ptr", $__MediaInfoHandle[0], "wstr", $_file)
+	DllCall($__MediaInfo, "wstr", "MediaInfo_Option", "ptr", 0, "wstr", "Complete", "wstr", "1")
+	$_Inform = DllCall($__MediaInfo, "wstr", "MediaInfo_Inform", "ptr", $__MediaInfoHandle[0], "int", 0)
+	DllCall($__MediaInfo, "int", "MediaInfo_Close", "ptr", $__MediaInfoHandle[0])
+	DllCall($__MediaInfo, "none", "MediaInfo_Delete", "ptr", $__MediaInfoHandle[0])
+	DllClose($__MediaInfo)
+
+	$_Return = StringSplit($_Inform[0], @LF)
+	If @error Then
+		SetError(1, 0, "")
+		Return
+	EndIf
+
+	$_Attributes = StringSplit($Request, "|", $STR_NOCOUNT)
+	If @error Then
+		If $_Attributes[0] = Default Then
+			Return $_Return
+		Else
+			For $String In $_Return
+				If StringInStr($String, $_Attributes[0]) Then
+					Local $aDummy = StringSplit($String, ": ", 1)
+					Return $aDummy[2]
+				EndIf
+			Next
+		EndIf
+	Else
+		For $Attribute In $_Attributes
+			For $String In $_Return
+				If StringInStr($String, $Attribute) Then
+					Local $aDummy = StringSplit($String, ": ", 1)
+					_ArrayAdd($_Result, $aDummy[2])
+					ExitLoop
+				EndIf
+			Next
+		Next
+		_ArrayDelete($_Result, 0)
+		Return $_Result
+	EndIf
+
+EndFunc   ;==>_MediaInfo
+
+Func _FileName($sString)
+	Local $aFileName = _StringExplode($sString, "\")
+	Return $aFileName[UBound($aFileName) - 1]
+EndFunc   ;==>_FileName
+
+Func _Log($sMessage)
+
+	FileWriteLine($hLogFile, $sMessage)
+	ConsoleWrite($sMessage & @CRLF)
+	GUICtrlSetData($hEdit, $sMessage & @CRLF, " ")
+
+EndFunc   ;==>_Log
 
 Func _Exit()
 	_GDIPlus_ImageDispose($hCompImage)
 	_GDIPlus_ImageDispose($hMainImage)
-	For $handle In $aFTCHandles
-		_GDIPlus_ImageDispose($handle)
+	For $i = 1 To $aCollectionFiles[0][0]
+		_GDIPlus_ImageDispose($aCollectionFiles[$i][1])
 	Next
-	_GDIPlus_GraphicsDispose($hGraphics)
+	For $i = 1 To $aFilesToCompare[0][0]
+		_GDIPlus_ImageDispose($aFilesToCompare[$i][1])
+	Next
 	_GDIPlus_Shutdown()
+	MsgBox(0, "", "Done")
 	GUIDelete($hGui)
 	FileClose($hLogFile)
-	DirRemove(@ScriptDir & "\temp1", 1)
-	If Not $bSingleDir Then DirRemove(@ScriptDir & "\temp2", 1)
 	Exit
 EndFunc   ;==>_Exit
-
-Func _Thumb($hImage)
-	Return _GDIPlus_ImageResize($hImage, 120, 80)
-EndFunc   ;==>_Thumb
-
-Func _Continue()
-	$bWait = False
-EndFunc   ;==>_Continue
 
